@@ -1,0 +1,171 @@
+---
+# Empty task file - to be populated later 
+
+- name: Verify required variables
+  ansible.builtin.assert:
+    that:
+    - vault_path is defined
+    - output_dir is defined
+    - role_path is defined
+    - vault_env is defined
+    fail_msg: "Missing required variables. Please ensure all required variables are defined"
+
+- name: Set file path and environment variables
+  set_fact:
+    processed_report: "{{ output_dir }}/combined_vulnerability_report_processed.json"
+    email_template: "{{ role_path }}/files/email_template.txt"
+    vault_environment: "{{ vault_env }}"
+
+- name: Ensure output directory exists
+  file:
+    path: "{{ output_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Check if processed report exists
+  stat:
+    path: "{{ processed_report }}"
+  register: report_stat
+
+- name: Load report data for custodian notifications
+  slurp:
+    src: "{{ processed_report }}"
+  register: report_data
+  when: report_stat.stat.exists
+
+- name: Extract custodian information from report
+  set_fact:
+    custodian_data: "{{ (report_data.content | b64decode | from_json).custodian }}"
+    all_app_codes: "{{ (report_data.content | b64decode | from_json).summary.app_codes }}"
+  when: report_stat.stat.exists
+
+- name: Display custodian summary
+  debug:
+    msg:
+    - "Found {{ custodian_data | length }} custodian(s) to notify"
+    - "App codes to process: {{ all_app_codes | map(attribute='app_code') | list }}"
+    - "Custodians: {{ custodian_data.keys() | list }}"
+  when: report_stat.stat.exists and custodian_data is defined
+
+# Send individual notifications for each app code
+- name: Send individual notifications to app custodians
+  block:
+  - name: Find custodian for current app code
+    set_fact:
+      current_custodian: "{{ item.value.custodian_name }}"
+      current_custodian_email: "{{ item.key if item.value.has_email else None }}"
+      current_custodian_key: "{{ item.key }}"
+    when: app_info.app_code in item.value.app_codes
+    loop: "{{ custodian_data | dict2items }}"
+    register: custodian_lookup
+
+  - name: Extract found custodian info
+    set_fact:
+      app_custodian_name: "{{ custodian_lookup.results | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts.current_custodian') | first | default('Unknown Custodian') }}"
+      app_custodian_email: "{{ custodian_lookup.results | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts.current_custodian_email') | first | default(None) }}"
+      app_custodian_key: "{{ custodian_lookup.results | selectattr('ansible_facts', 'defined') | map(attribute='ansible_facts.current_custodian_key') | first | default(None) }}"
+
+  - name: Get app-specific issues from custodian data
+    set_fact:
+      app_specific_issues: "{{ custodian_data[app_custodian_key].issues | default([]) }}"
+      app_high_severity_issues: "{{ custodian_data[app_custodian_key].issues | default([]) | selectattr('severity', 'in', ['critical', 'high']) | list }}"
+    when: app_custodian_key is defined and app_custodian_key in custodian_data
+
+  - name: Create personalized email content for app custodian
+    copy:
+      content: |
+        Subject: URGENT: Compliance Issues for Application {{ app_info.app_code }} - {{ ansible_date_time.date }}
+
+        Dear {{ app_custodian_name }},
+
+        This is an urgent compliance notification for your application {{ app_info.app_code }}.
+
+        ===============================================
+        APPLICATION COMPLIANCE REPORT
+        ===============================================
+
+        Application Code: {{ app_info.app_code }}
+        Custodian: {{ app_custodian_name }}
+        Report Date: {{ ansible_date_time.date }}
+        Total Issues: {{ app_specific_issues | length }}
+
+        Issue Types: {{ app_info.issue_types | join(', ') }}
+
+        ===============================================
+        SEVERITY BREAKDOWN
+        ===============================================
+
+        Critical: {{ app_info.severity_counts.critical | default(0) }}
+        High: {{ app_info.severity_counts.high | default(0) }}
+        Medium: {{ app_info.severity_counts.medium | default(0) }}
+        Low: {{ app_info.severity_counts.low | default(0) }}
+        Info: {{ app_info.severity_counts.info | default(0) }}
+
+        ===============================================
+        REQUIRED ACTIONS
+        ===============================================
+
+        1. Review all issues for your application
+        2. Implement recommended remediations  
+        3. Update security controls as needed
+        4. Contact IT Security team for assistance: security@company.com
+
+        This is an automated notification. Please do not reply to this email.
+
+        Best regards,
+        IT Security & Compliance Team
+      dest: "{{ output_dir }}/{{ app_info.app_code }}_email_content.txt"
+
+  - name: Send personalized notification to app custodian
+    community.general.mail:
+      to: "{{ app_custodian_email if app_custodian_email else 'compliance-team@company.com' }}"
+      subject: "URGENT: Compliance Issues for {{ app_info.app_code }} - {{ ansible_date_time.date }}"
+      body: "{{ lookup('file', output_dir + '/' + app_info.app_code + '_email_content.txt') }}"
+    register: custodian_email_result
+
+  - name: Log individual notification
+    debug:
+      msg:
+      - "✅ Notification sent for {{ app_info.app_code }}"
+      - "👤 Custodian: {{ app_custodian_name }}"
+      - "📧 Email: {{ app_custodian_email if app_custodian_email else 'compliance-team@company.com' }}"
+      - "🔢 Issues: {{ app_specific_issues | length }}"
+
+  loop: "{{ all_app_codes }}"
+  loop_control:
+    loop_var: app_info
+  when: report_stat.stat.exists and all_app_codes is defined
+
+- name: Send summary email to compliance team
+  community.general.mail:
+    to: "compliance-team@company.com" # Replace with your actual compliance team email
+    subject: "Daily Compliance Summary - {{ ansible_date_time.date }} - All Applications"
+    body: |
+      Daily Compliance Summary
+
+      Date: {{ ansible_date_time.date }}
+      Total Applications Processed: {{ all_app_codes | length }}
+      Total Custodians Notified: {{ custodian_data | length }}
+
+      Applications Processed:
+      {% for app in all_app_codes %}
+      - {{ app.app_code }}: {{ app.issue_types | length }} issue types, {{ app.severity_counts.high + app.severity_counts.critical }} high/critical issues
+      {% endfor %}
+
+      Individual notifications have been sent to respective application custodians.
+
+      Please see attached comprehensive report for full details.
+    attachments:
+    - "{{ processed_report }}"
+  when: report_stat.stat.exists
+  register: summary_email_result
+
+- name: Log notification summary
+  debug:
+    msg: |
+      Notification Summary:
+      - Individual emails sent to {{ custodian_data | length }} custodian(s)
+      - Applications processed: {{ all_app_codes | map(attribute='app_code') | join(', ') }}
+      - Summary email sent to compliance team
+      - Total notifications: {{ (custodian_data | length) + 1 }}
+  when: report_stat.stat.exists

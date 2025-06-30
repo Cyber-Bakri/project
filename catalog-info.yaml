@@ -1,0 +1,9 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: placeholder
+spec:
+  type: service
+  lifecycle: experimental
+  owner: placeholder
+  # To be populated later 

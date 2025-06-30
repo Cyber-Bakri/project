@@ -1,0 +1,50 @@
+---
+# Empty task file - to be populated later 
+
+- name: Set processed file paths
+  set_fact:
+    processed_report_file: "{{ output_dir }}/{{ current_issue_type }}_vulnerability_report_processed.json"
+    email_content_file: "{{ output_dir }}/{{ current_issue_type }}_email_content.txt"
+    email_template_file: "{{ role_path }}/files/email_template.txt"
+
+- name: Check if raw data file exists
+  stat:
+    path: "{{ current_raw_data_file }}"
+  register: raw_data_check
+
+- name: Process vulnerability data
+  ansible.builtin.command:
+    cmd: >
+      python3 {{ role_path }}/files/process_data.py --input "{{ current_raw_data_file }}" --output "{{ processed_report_file }}" --email-template "{{ email_template_file }}" --email-output "{{ email_content_file }}"
+  register: process_result
+  failed_when: process_result.rc != 0
+  when: raw_data_check.stat.exists
+
+- name: Display processing results
+  debug:
+    msg:
+    - "Processing completed for issue type: {{ current_issue_type }}"
+    - "Processed report: {{ processed_report_file }}"
+    - "Email content: {{ email_content_file }}"
+    - "Exit code: {{ process_result.rc }}"
+    - "Output: {{ process_result.stdout_lines }}"
+  when: process_result is defined and process_result.stdout_lines is defined
+
+- name: Check if processed files were created
+  stat:
+    path: "{{ item }}"
+  register: processed_files_stat
+  loop:
+  - "{{ processed_report_file }}"
+  - "{{ email_content_file }}"
+
+- name: Verify all processed files exist
+  fail:
+    msg: "Missing processed file: {{ item.item }}"
+  when: not item.stat.exists
+  loop: "{{ processed_files_stat.results }}"
+
+- name: Store processed file paths for notification task
+  set_fact:
+    latest_processed_report: "{{ processed_report_file }}"
+    latest_email_content: "{{ email_content_file }}"
