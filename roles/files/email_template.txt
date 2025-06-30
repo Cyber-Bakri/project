@@ -1,0 +1,71 @@
+Subject: Server Compliance Report - {{ report_date }} - {{ app_code }}
+
+Dear Application Custodian,
+
+This is an automated compliance report for your application(s) for the period from {{ start_date }} to {{ end_date }}.
+
+===============================================
+COMPLIANCE REPORT SUMMARY
+===============================================
+
+Report Date: {{ generated_at }}
+Application Code(s): {{ app_code }}
+Total Issues Found: {{ total_issues }}
+High Severity Issues: {{ high_severity_count }}
+
+Issue Types Detected: {{ issue_types }}
+
+===============================================
+SEVERITY BREAKDOWN
+===============================================
+
+Critical: {{ critical_count }}
+High: {{ high_count }}
+Medium: {{ medium_count }}
+Low: {{ low_count }}
+Info: {{ info_count }}
+
+===============================================
+HIGH SEVERITY ISSUES SUMMARY
+===============================================
+
+| Issue Type | Severity | Component | App Code | Remediation Link |
+|------------|----------|-----------|----------|------------------|
+{% for issue in high_severity_issues %}
+| {{ issue.type }} | {{ issue.severity }} | {{ issue.component }} | {{ issue.app_code | default('N/A') }} | {{ issue.remediation_link | default('N/A') }} |
+{% endfor %}
+
+{% if non_compliant_apps %}
+===============================================
+NON-COMPLIANT APPLICATIONS
+===============================================
+
+The following applications require immediate attention:
+
+{% for reason in non_compliant_apps[0].reasons %}
+- {{ reason }}
+{% endfor %}
+
+Severity Breakdown for Non-Compliant Apps:
+- Critical: {{ non_compliant_apps[0].severity_counts.critical }}
+- High: {{ non_compliant_apps[0].severity_counts.high }}
+- Medium: {{ non_compliant_apps[0].severity_counts.medium }}
+- Low: {{ non_compliant_apps[0].severity_counts.low }}
+- Info: {{ non_compliant_apps[0].severity_counts.info }}
+{% endif %}
+
+===============================================
+NEXT STEPS
+===============================================
+
+1. Review the attached detailed report for complete information
+2. Address high and critical severity issues immediately
+3. Plan remediation for medium and low severity issues
+4. Contact the security team if you need assistance
+
+This report was generated automatically. Please do not reply to this email.
+
+For questions or support, contact: compliance-team@company.com
+
+Best regards,
+Automated Compliance Reporting System 

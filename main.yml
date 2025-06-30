@@ -1,0 +1,99 @@
+---
+# Main playbook - to be populated later 
+
+- name: IT Risk Metrics Email Notification
+  hosts: localhost
+  vars:
+    survey_issue_type: "{{ survey_issue_type_param }}"
+    vault_env: "{{ vault_environment | default('DEV')}}"
+    secrets:
+    - namespace: vault_credentials
+      vault_env: "{{ vault_environment }}"
+      vault_secret_path: "AAP/server_compliance_reporting/credentials"
+    - namespace: vault_extravars
+      vault_env: "{{ vault_environment }}"
+      vault_secret_path: "AAP/server_compliance_reporting/extra_vars"
+    issue_types:
+    - "AV TSS"
+    - "Cryptography"
+    - "Open Data"
+    - "TSS"
+    - "Vulnerability"
+
+  # roles:
+  #   - {role: rbc_common.hashicorp_vault.vault_init}
+
+  tasks:
+  - name: Assign secrets to dedicated variables
+    ansible.builtin.set_fact:
+      es_service_id: "SATU0SRVECWRITE"
+      es_service_id_password: "R4@.iE@GmdVMp3"
+      # es_service_id: "{{ vault[vault_environment].vault_credentials.es_service_id }}"
+      # es_service_id_password: "{{ vault[vault_environment].vault_credentials.es_service_id_password }}"
+    no_log: true
+
+  - name: Assign extra vars to dedicated variables
+    ansible.builtin.set_fact:
+      es_url: "https://e87a6cd02ed34b0b844d64cc7d8c41a9.ece.saifg.rbc.com:9243"
+      server_compliance_metrics_index: "atu0-server-compliance-metrics*"
+      role_path: "roles"
+      # to: "{{ vault[vault_environment].vault_extravars.to }}"
+      # es_url: "{{ vault[vault_environment].vault_extravars.es_url }}"
+      # server_compliance_metrics_index: "{{ vault[vault_environment].vault_extravars.server_compliance_metrics_index }}"
+
+  - name: Installing elastic module
+    ansible.builtin.pip:
+      name: elasticsearch==8.17.2
+      state: present
+
+  - name: Loop through issue types and fetch
+    ansible.builtin.include_tasks: roles/tasks/fetch_data.yml
+    loop: "{{ issue_types }}"
+    loop_control:
+      loop_var: issue_type
+    vars:
+      current_issue_type: "{{ issue_type }}"
+      current_raw_data_file: "roles/files/output/{{ issue_type }}_report_raw.json"
+      output_dir: "roles/files/output"
+      role_path: "roles"
+      ES_USERNAME: "{{ es_service_id | default('') }}"
+      ES_PASSWORD: "{{ es_service_id_password | default('') }}"
+
+  - name: Loop through issue types and process
+    ansible.builtin.include_tasks: roles/tasks/process_data.yml
+    loop: "{{ issue_types }}"
+    loop_control:
+      loop_var: issue_type
+    vars:
+      current_issue_type: "{{ issue_type }}"
+      current_raw_data_file: "roles/files/output/{{ issue_type }}_report_raw.json"
+      output_dir: "roles/files/output"
+      role_path: "roles"
+      # - name: Process data and generate reports
+      #   ansible.builtin.include_tasks: roles/tasks/process_data.yml
+      #   vars:
+      #     current_raw_data_file: "roles/files/output/{{ issue_type }}_report_raw.json"
+      #     output_dir: "roles/files/output"
+      #     role_path: "roles"
+
+  - name: Combine all processed reports for notifications
+    ansible.builtin.command:
+      cmd: "python3 {{ role_path }}/files/combine_reports.py {{ output_dir }}"
+    vars:
+      output_dir: "roles/files/output"
+      role_path: "roles"
+    register: combine_result
+    failed_when: false
+
+  - name: Display combine results
+    debug:
+      msg: "{{ combine_result.stdout_lines }}"
+
+  - name: Send notifications to app custodians
+    vars:
+      vault_path: "AAP/server_compliance_reporting/extra_vars"
+      output_dir: "roles/files/output"
+      role_path: "roles"
+      vault_env: "{{ vault_environment | default('DEV') }}"
+      raw_data_file: "roles/files/output/report_raw.json"
+    ansible.builtin.include_tasks: roles/tasks/notify_custodian.yml

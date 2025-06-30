@@ -1,0 +1,45 @@
+---
+# Empty task file - to be populated later 
+
+- name: Set environment variables for data fetching
+  set_fact:
+    fetch_env:
+      ES_HOST: "{{ es_url }}"
+      ES_INDEX: "{{ server_compliance_metrics_index }}"
+      ES_USERNAME: "{{ ES_USERNAME }}"
+      ES_PASSWORD: "{{ ES_PASSWORD }}"
+      OUTPUT_FILE: "{{ current_raw_data_file }}"
+
+- name: Execute fetch_data.py script
+  ansible.builtin.command:
+    cmd: "python3 {{ role_path }}/files/fetch_data.py"
+  environment: "{{ fetch_env }}"
+  register: fetch_result
+  failed_when: fetch_result.rc != 0
+
+- name: Display fetch results
+  debug:
+    msg:
+    - "Fetch completed for issue type: {{ current_issue_type }}"
+    - "Output file: {{ current_raw_data_file }}"
+    - "Exit code: {{ fetch_result.rc }}"
+    - "Output: {{ fetch_result.stdout_lines }}"
+  when: fetch_result.stdout_lines is defined
+
+- name: Check if raw data file was created
+  stat:
+    path: "{{ current_raw_data_file }}"
+  register: raw_data_stat
+
+- name: Handle case when no data was fetched
+  block:
+  - name: Create empty data file if none exists
+    copy:
+      content: '{"hits": {"hits": []}, "aggregations": {}}'
+      dest: "{{ current_raw_data_file }}"
+    when: not raw_data_stat.stat.exists
+
+  - name: Log when no data found
+    debug:
+      msg: "No data found for {{ current_issue_type }}, created empty file to continue processing"
+    when: not raw_data_stat.stat.exists

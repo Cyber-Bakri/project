@@ -1,0 +1,67 @@
+---
+# Empty task file - to be populated later 
+
+- name: Set processed file paths
+  set_fact:
+    processed_report_file: "{{ output_dir }}/{{ current_issue_type }}_report_processed.json"
+    email_content_file: "{{ output_dir }}/{{ current_issue_type }}_email_content.txt"
+    email_template_file: "{{ role_path }}/files/email_template.txt"
+
+- name: Check if raw data file exists
+  stat:
+    path: "{{ current_raw_data_file }}"
+  register: raw_data_check
+
+- name: Process compliance data
+  ansible.builtin.command:
+    cmd: >
+      python3 {{ role_path }}/files/process_data.py --input "{{ current_raw_data_file }}" --output "{{ processed_report_file }}" --email-template "{{ email_template_file }}" --email-output "{{ email_content_file }}"
+  register: process_result
+  failed_when: false # Don't fail on processing errors, just log them
+  when: raw_data_check.stat.exists
+
+- name: Display processing results
+  debug:
+    msg:
+    - "Processing completed for issue type: {{ current_issue_type }}"
+    - "Processed report: {{ processed_report_file }}"
+    - "Email content: {{ email_content_file }}"
+    - "Exit code: {{ process_result.rc | default('N/A') }}"
+    - "Output: {{ process_result.stdout_lines | default(['No output']) }}"
+    - "{% if process_result.rc != 0 %}Warning: Processing had errors but continuing...{% endif %}"
+  when: process_result is defined
+
+- name: Check if processed files were created
+  stat:
+    path: "{{ item }}"
+  register: processed_files_stat
+  loop:
+  - "{{ processed_report_file }}"
+  - "{{ email_content_file }}"
+
+- name: Check processed files and handle missing ones
+  block:
+  - name: Log missing processed files
+    debug:
+      msg: "Warning: Missing processed file: {{ item.item }} for issue type {{ current_issue_type }}"
+    when: not item.stat.exists
+    loop: "{{ processed_files_stat.results }}"
+
+  - name: Create empty processed files if missing
+    copy:
+      content: '{"custodian": {}, "summary": {"app_codes": []}}'
+      dest: "{{ item.item }}"
+    when: not item.stat.exists and 'processed.json' in item.item
+    loop: "{{ processed_files_stat.results }}"
+
+  - name: Create empty email content if missing
+    copy:
+      content: "No issues found for {{ current_issue_type }}."
+      dest: "{{ item.item }}"
+    when: not item.stat.exists and 'email_content.txt' in item.item
+    loop: "{{ processed_files_stat.results }}"
+
+- name: Store processed file paths for notification task
+  set_fact:
+    latest_processed_report: "{{ processed_report_file }}"
+    latest_email_content: "{{ email_content_file }}"
