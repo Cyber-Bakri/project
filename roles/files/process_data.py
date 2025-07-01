@@ -51,10 +51,9 @@ def analyze_issues(hits):
         source = hit.get('_source', {})
         severity = source.get('severity', '')
         
-        # Handle null/empty severity - treat all issues as "medium" by default
-        # or assign severity based on issue type
-        if not severity or severity == 'null':
-            # Assign severity based on issue type
+        # Handle severity assignment - use provided value or assign based on issue type
+        if not severity or severity == 'null' or severity == '':
+            # Assign severity based on issue type when not provided
             issue_type = source.get('issueType', '').lower()
             if 'vulnerability' in issue_type:
                 severity = 'high'
@@ -69,15 +68,20 @@ def analyze_issues(hits):
             else:
                 severity = 'medium'  # default
         else:
+            # Use the provided severity value (normalize to lowercase)
             severity = severity.lower()
         
         app_code = source.get('appCode')
         issue_type = source.get('issueType')
         
-        # Extract custodian information from contact-info structure
+        # Extract custodian information from contact-info structure (if available)
         contact_info = source.get('contact-info', {})
         custodian_name = contact_info.get('app_custodian_name', 'Unknown')
-        custodian_email = contact_info.get('app_custodian_email', None)  # Future field
+        custodian_email = contact_info.get('app_custodian_email', None)
+        
+        # If no contact-info, try legacy fields or use default based on app_code
+        if not custodian_name or custodian_name == 'Unknown':
+            custodian_name = f"Custodian for {app_code}" if app_code else "Unknown Custodian"
         
         # If no email in contact-info, try legacy field (fallback)
         if not custodian_email:
@@ -126,7 +130,7 @@ def analyze_issues(hits):
                 'severity': severity.upper(),
                 'component': f"{source.get('affectedItemType', 'Unknown')} - {source.get('affectedItemName', 'Unknown')}",
                 'app_code': app_code,
-                'remediation_link': source.get('remediationLink', source.get('solution', 'N/A'))
+                'remediation_link': source.get('solution', source.get('remediationLink', 'N/A'))
             })
     
     app_codes_list = [
@@ -137,6 +141,15 @@ def analyze_issues(hits):
         }
         for code, details in app_codes.items()
     ]
+    
+    # Debug output
+    total_processed = sum(severity_counts.values())
+    print(f"Analysis complete:")
+    print(f"  - Processed {total_processed} issues")
+    print(f"  - Severity breakdown: {severity_counts}")
+    print(f"  - High severity issues: {len(high_severity_issues)}")
+    print(f"  - Unique app codes: {len(app_codes_list)}")
+    print(f"  - Issue types found: {list(issue_types)}")
     
     return {
         "severity_counts": severity_counts,
@@ -163,8 +176,9 @@ def identify_non_compliant_apps(hits):
         app_code = source.get('appCode')
         severity = source.get('severity', '')
         
-        # Handle null/empty severity - assign based on issue type
-        if not severity or severity == 'null':
+        # Handle severity assignment - use provided value or assign based on issue type
+        if not severity or severity == 'null' or severity == '':
+            # Assign severity based on issue type when not provided
             issue_type = source.get('issueType', '').lower()
             if 'vulnerability' in issue_type:
                 severity = 'high'
@@ -179,6 +193,7 @@ def identify_non_compliant_apps(hits):
             else:
                 severity = 'medium'  # default
         else:
+            # Use the provided severity value (normalize to lowercase)
             severity = severity.lower()
         
         if not app_code:
@@ -222,6 +237,7 @@ def generate_report(input_file, output_file):
         print("No issues found.")
         return False
     
+    print(f"Processing {total} total issues from {len(hits)} retrieved documents...")
     analysis = analyze_issues(hits)
     
     compliance_status = identify_non_compliant_apps(hits)
@@ -265,7 +281,13 @@ def generate_report(input_file, output_file):
     try:
         with open(output_file, 'w') as f:
             json.dump(report, f, indent=2)
-        print(f"Report generated and saved to {output_file}")
+        
+        print(f"✅ Report generated and saved to {output_file}")
+        print(f"📊 Summary:")
+        print(f"   📋 Total Issues: {report['summary']['total_issues']}")
+        print(f"   🚨 High Severity: {report['summary']['high_severity_count']}")
+        print(f"   📱 App Codes: {len(report['summary']['app_codes'])}")
+        print(f"   ⚠️  Non-Compliant Apps: {len(report['summary']['non_compliant_apps'])}")
         return True
     except Exception as e:
         print(f"ERROR: Failed to generate report: {str(e)}")
