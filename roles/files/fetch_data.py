@@ -114,9 +114,10 @@ def query_elasticsearch():
             verify=False
         )
         
+        # Parse response regardless of status code
+        result = response.json()
+        
         if response.status_code == 200:
-            result = response.json()
-            
             app_codes_with_issues = []
             all_issue_types = set()
             
@@ -168,9 +169,23 @@ def query_elasticsearch():
                 else:
                     print("No documents returned, but continuing with empty result set")
         else:
-            hits = result.get("hits", {}).get("hits", [])
-            total = result.get("hits", {}).get("total", {}).get("value", 0)
-            print(f"Query returned {total} results across {len(app_codes_with_issues)} app codes")
+            print(f"ERROR: Elasticsearch returned status code {response.status_code}")
+            print(f"Response: {result}")
+            # Create empty result file for non-200 responses
+            output_file = get_env_var("OUTPUT_FILE", "")
+            if output_file:
+                empty_result = {
+                    "hits": {"hits": [], "total": {"value": 0}},
+                    "aggregations": {},
+                    "error": f"HTTP {response.status_code}: {result}",
+                    "date_range": {
+                        "start_date": start_date,
+                        "end_date": end_date
+                    }
+                }
+                with open(output_file, 'w') as f:
+                    json.dump(empty_result, f, indent=2)
+                print(f"Created empty result file at {output_file} due to HTTP error")
         
         return True
     except Exception as e:
