@@ -18,8 +18,8 @@ def get_env_var(var_name, default=None, required=False):
         sys.exit(1)
     return value
 
-def load_compliance_data(file_path):
-    """Load compliance data from JSON file"""
+def load_vulnerability_data(file_path):
+    """Load vulnerability data from JSON file"""
     try:
         with open(file_path, 'r') as f:
             data = json.load(f)
@@ -85,8 +85,6 @@ def analyze_issues(hits):
         
         if severity in severity_counts:
             severity_counts[severity] += 1
-            if severity in ["critical", "high"]:
-                high_severity_issues.append(source)
         
         app_code = source.get('appCode')
         if app_code:
@@ -218,23 +216,15 @@ def identify_non_compliant_apps(hits):
 
 def generate_report(input_file, output_file):
     """Generate a formatted report from data"""
-    hits, total = load_compliance_data(input_file)
+    hits, total = load_vulnerability_data(input_file)
     
     if total == 0:
-        print("No issues found, creating empty report to continue pipeline.")
-        # Create empty report structure for continuation
-        analysis = {
-            "severity_counts": {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
-            "app_codes": [],
-            "issue_types": [],
-            "high_severity_count": 0,
-            "high_severity_issues": [],
-            "custodian": {}
-        }
-        compliance_status = {}
-    else:
-        analysis = analyze_issues(hits)
-        compliance_status = identify_non_compliant_apps(hits)
+        print("No issues found.")
+        return False
+    
+    analysis = analyze_issues(hits)
+    
+    compliance_status = identify_non_compliant_apps(hits)
     
     # Get date range from environment variables or use defaults
     end_date = os.environ.get('END_DATE', datetime.now().strftime("%Y-%m-%d"))
@@ -400,8 +390,7 @@ def main():
     
     success = generate_report(args.input, args.output)
     
-    # Always try to generate email content, even if no data was found
-    if args.email_template and args.email_output:
+    if success and args.email_template and args.email_output:
         email_content = prepare_email_content(args.email_template, args.output)
         if email_content:
             try:
@@ -410,17 +399,8 @@ def main():
                 print(f"Email content generated and saved to {args.email_output}")
             except Exception as e:
                 print(f"ERROR: Failed to save email content: {str(e)}")
-        else:
-            # Create minimal email content if template processing fails
-            try:
-                with open(args.email_output, 'w') as f:
-                    f.write("No issues found in this data set.")
-                print(f"Empty email content created at {args.email_output}")
-            except Exception as e:
-                print(f"ERROR: Failed to create empty email content: {str(e)}")
     
-    # Always return success (0) to continue pipeline, log issues but don't fail
-    return 0
+    return 0 if success else 1
 
 if __name__ == "__main__":
     sys.exit(main()) 
