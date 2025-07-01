@@ -114,8 +114,13 @@ def query_elasticsearch():
             verify=False
         )
         
-        # Parse response regardless of status code
-        result = response.json()
+        # Parse response with error handling
+        try:
+            result = response.json()
+        except ValueError as json_error:
+            print(f"ERROR: Invalid JSON response from Elasticsearch: {json_error}")
+            print(f"Response text: {response.text[:500]}...")
+            raise Exception(f"Invalid JSON response: {json_error}")
         
         if response.status_code == 200:
             app_codes_with_issues = []
