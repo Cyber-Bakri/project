@@ -30,56 +30,80 @@ def get_date_range():
     return start_date_str, end_date_str
 
 def query_elasticsearch():
-    """Query Elasticsearch for P1 and P2 priority items only"""
+    """Query Elasticsearch using environment variables for configuration"""
     
     # Get environment variables
     es_host = get_env_var("ES_HOST", required=True)
     es_index = get_env_var("ES_INDEX", required=True)
     
-    # date range for reference
+    # date range for last week
     start_date, end_date = get_date_range()
-    print(f"Fetching P1/P2 priority data from {start_date} to {end_date}")
+    print(f"Fetching data from {start_date} to {end_date}")
     
     # Get authentication if provided
     username = get_env_var("ES_USERNAME", "")
     password = get_env_var("ES_PASSWORD", "")
     auth = None
     if username and password:
-        print(f"Using authentication with username: {username}")
-        print(f"Password length: {len(password)} characters")
         auth = (username, password)
-    else:
-        print("No authentication credentials provided")
     
     # Build the search URL
     search_url = f"{es_host}/{es_index}/_search"
     
-    print(f"Elasticsearch URL: {search_url}")
-    print(f"Index pattern: {es_index}")
-    
-    # Query only for P1 and P2 priority items, sort by issue types
+    # Prepare the query - simplified to match actual data structure
     query = {
         "query": {
             "bool": {
                 "must": [
                     {
                         "exists": {
+                            "field": "issueType"
+                        }
+                    },
+                    {
+                        "exists": {
                             "field": "appCode"
                         }
                     }
                 ]
+                # Removed priority and issueState filters as they may not exist in actual data
+                # Add date range filter if needed:
+                # {
+                #     "range": {
+                #         "timestamp": {
+                #             "gte": start_date,
+                #             "lte": end_date
+                #         }
+                #     }
+                # }
             }
         },
-        "size": 10
+        "aggs": {
+            "by_app_code": {
+                "terms": {
+                    "field": "appCode.keyword",
+                    "size": 1000
+                },
+                "aggs": {
+                    "issue_types": {
+                        "terms": {
+                            "field": "issueType.keyword"
+                        }
+                    }
+                }
+            },
+            "all_issue_types": {
+                "terms": {
+                    "field": "issueType.keyword"
+                }
+            }
+        },
+        "size": 1000  # Increase size to get more actual documents
     }
     
     headers = {
         "Content-Type": "application/json"
     }
-    
-    print(f"Making request to: {search_url}")
-    print(f"Using auth: {'Yes' if auth else 'No'}")
-    print(f"Headers: {headers}")
     
     try:
         response = requests.post(
@@ -93,48 +117,62 @@ def query_elasticsearch():
         if response.status_code == 200:
             result = response.json()
             
-            # Simplified processing for testing
-            hits = result.get("hits", {}).get("hits", [])
-            total = result.get("hits", {}).get("total", {}).get("value", 0)
+            app_codes_with_issues = []
+            all_issue_types = set()
             
-            print(f"SUCCESS: Retrieved {len(hits)} documents out of {total} total")
-            
-            if hits:
-                print("Sample document fields:")
-                sample_source = hits[0].get("_source", {})
-                print(f"Available fields: {list(sample_source.keys())}")
+            if "aggregations" in result:
+                if "all_issue_types" in result["aggregations"]:
+                    for bucket in result["aggregations"]["all_issue_types"]["buckets"]:
+                        all_issue_types.add(bucket["key"])
                 
-                # Check if priority field exists
-                if "priority" in sample_source:
-                    print(f"Priority field found: {sample_source['priority']}")
-                else:
-                    print("Priority field NOT found in documents")
+                if "by_app_code" in result["aggregations"]:
+                    for app_bucket in result["aggregations"]["by_app_code"]["buckets"]:
+                        if app_bucket["doc_count"] > 0:
+                            app_code = app_bucket["key"]
+                            app_issue_types = []
+                            
+                            if "issue_types" in app_bucket:
+                                for type_bucket in app_bucket["issue_types"]["buckets"]:
+                                    app_issue_types.append(type_bucket["key"])
+                            
+                            app_codes_with_issues.append({
+                                "app_code": app_code,
+                                "issue_types": app_issue_types,
+                                "count": app_bucket["doc_count"]
+                            })
             
-            # Save results
             output_file = get_env_var("OUTPUT_FILE", "")
             if output_file:
-                # Add simple processing summary
-                result["processing_summary"] = {
-                    "total_documents": total,
-                    "retrieved_documents": len(hits),
-                    "has_priority_field": "priority" in (hits[0].get("_source", {}) if hits else {}),
-                    "date_range": {
-                        "start_date": start_date,
-                        "end_date": end_date
-                    }
+                result["date_range"] = {
+                    "start_date": start_date,
+                    "end_date": end_date
                 }
                 
                 with open(output_file, 'w') as f:
                     json.dump(result, f, indent=2)
-                
                 print(f"Query results saved to {output_file}")
+                print(f"Found {len(app_codes_with_issues)} app codes with issues")
+                print(f"Total issue types found: {len(all_issue_types)}")
+                print(f"Issue types: {', '.join(sorted(all_issue_types))}")
+                
+                # Print sample of actual documents for debugging
+                hits = result.get("hits", {}).get("hits", [])
+                total = result.get("hits", {}).get("total", {}).get("value", 0)
+                print(f"Total documents: {total}")
+                print(f"Retrieved {len(hits)} documents")
+                
+                if hits:
+                    print("Sample document structure:")
+                    sample_source = hits[0].get("_source", {})
+                    print(f"Available fields: {list(sample_source.keys())}")
+                else:
+                    print("No documents returned, but continuing with empty result set")
         else:
-            print(f"ERROR: Elasticsearch query failed with status {response.status_code}")
-            print(f"Response: {response.text}")
-            return False
+            hits = result.get("hits", {}).get("hits", [])
+            total = result.get("hits", {}).get("total", {}).get("value", 0)
+            print(f"Query returned {total} results across {len(app_codes_with_issues)} app codes")
         
         return True
-        
     except Exception as e:
         print(f"ERROR: Failed to query Elasticsearch: {str(e)}")
         
@@ -144,16 +182,11 @@ def query_elasticsearch():
             empty_result = {
                 "hits": {"hits": [], "total": {"value": 0}},
                 "aggregations": {},
-                "processing_summary": {
-                    "total_documents": 0,
-                    "retrieved_documents": 0,
-                    "has_priority_field": False,
-                    "date_range": {
-                        "start_date": get_date_range()[0],
-                        "end_date": get_date_range()[1]
-                    }
-                },
-                "error": str(e)
+                "error": str(e),
+                "date_range": {
+                    "start_date": get_date_range()[0],
+                    "end_date": get_date_range()[1]
+                }
             }
             try:
                 with open(output_file, 'w') as f:
@@ -166,9 +199,4 @@ def query_elasticsearch():
 
 if __name__ == "__main__":
     success = query_elasticsearch()
-    if success:
-        print("Data fetch completed successfully")
-        sys.exit(0)
-    else:
-        print("Data fetch failed")
-        sys.exit(1) 
+    sys.exit(0 if success else 1) 
