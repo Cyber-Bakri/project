@@ -45,10 +45,17 @@ def query_elasticsearch():
     password = get_env_var("ES_PASSWORD", "")
     auth = None
     if username and password:
+        print(f"Using authentication with username: {username}")
+        print(f"Password length: {len(password)} characters")
         auth = (username, password)
+    else:
+        print("No authentication credentials provided")
     
     # Build the search URL
     search_url = f"{es_host}/{es_index}/_search"
+    
+    print(f"Elasticsearch URL: {search_url}")
+    print(f"Index pattern: {es_index}")
     
     # Query only for P1 and P2 priority items, sort by issue types
     query = {
@@ -56,60 +63,23 @@ def query_elasticsearch():
             "bool": {
                 "must": [
                     {
-                        "terms": {
-                            "priority.keyword": ["P1", "P2"]
+                        "exists": {
+                            "field": "appCode"
                         }
                     }
                 ]
             }
         },
-        "aggs": {
-            "by_priority": {
-                "terms": {
-                    "field": "priority.keyword",
-                    "size": 10
-                },
-                "aggs": {
-                    "by_issue_type": {
-                        "terms": {
-                            "field": "issueType.keyword",
-                            "size": 100
-                        },
-                        "aggs": {
-                            "by_app_code": {
-                                "terms": {
-                                    "field": "appCode.keyword",
-                                    "size": 1000
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "all_issue_types": {
-                "terms": {
-                    "field": "issueType.keyword",
-                    "size": 100
-                }
-            },
-            "all_app_codes": {
-                "terms": {
-                    "field": "appCode.keyword",
-                    "size": 1000
-                }
-            }
-        },
-        "sort": [
-            {"priority.keyword": {"order": "asc"}},
-            {"issueType.keyword": {"order": "asc"}},
-            {"appCode.keyword": {"order": "asc"}}
-        ],
-        "size": 10000  # Get all matching documents
+        "size": 10
     }
     
     headers = {
         "Content-Type": "application/json"
     }
+    
+    print(f"Making request to: {search_url}")
+    print(f"Using auth: {'Yes' if auth else 'No'}")
+    print(f"Headers: {headers}")
     
     try:
         response = requests.post(
@@ -123,62 +93,31 @@ def query_elasticsearch():
         if response.status_code == 200:
             result = response.json()
             
-            priority_summary = {}
-            all_issue_types = set()
-            all_app_codes = set()
+            # Simplified processing for testing
+            hits = result.get("hits", {}).get("hits", [])
+            total = result.get("hits", {}).get("total", {}).get("value", 0)
             
-            if "aggregations" in result:
-                # Process priority aggregations
-                if "by_priority" in result["aggregations"]:
-                    for priority_bucket in result["aggregations"]["by_priority"]["buckets"]:
-                        priority = priority_bucket["key"]
-                        priority_count = priority_bucket["doc_count"]
-                        
-                        priority_summary[priority] = {
-                            "total_count": priority_count,
-                            "issue_types": {}
-                        }
-                        
-                        if "by_issue_type" in priority_bucket:
-                            for issue_type_bucket in priority_bucket["by_issue_type"]["buckets"]:
-                                issue_type = issue_type_bucket["key"]
-                                issue_count = issue_type_bucket["doc_count"]
-                                all_issue_types.add(issue_type)
-                                
-                                priority_summary[priority]["issue_types"][issue_type] = {
-                                    "count": issue_count,
-                                    "app_codes": []
-                                }
-                                
-                                if "by_app_code" in issue_type_bucket:
-                                    for app_bucket in issue_type_bucket["by_app_code"]["buckets"]:
-                                        app_code = app_bucket["key"]
-                                        app_count = app_bucket["doc_count"]
-                                        all_app_codes.add(app_code)
-                                        
-                                        priority_summary[priority]["issue_types"][issue_type]["app_codes"].append({
-                                            "app_code": app_code,
-                                            "count": app_count
-                                        })
+            print(f"SUCCESS: Retrieved {len(hits)} documents out of {total} total")
+            
+            if hits:
+                print("Sample document fields:")
+                sample_source = hits[0].get("_source", {})
+                print(f"Available fields: {list(sample_source.keys())}")
                 
-                # Get all issue types for reference
-                if "all_issue_types" in result["aggregations"]:
-                    for bucket in result["aggregations"]["all_issue_types"]["buckets"]:
-                        all_issue_types.add(bucket["key"])
-                
-                # Get all app codes for reference
-                if "all_app_codes" in result["aggregations"]:
-                    for bucket in result["aggregations"]["all_app_codes"]["buckets"]:
-                        all_app_codes.add(bucket["key"])
+                # Check if priority field exists
+                if "priority" in sample_source:
+                    print(f"Priority field found: {sample_source['priority']}")
+                else:
+                    print("Priority field NOT found in documents")
             
             # Save results
             output_file = get_env_var("OUTPUT_FILE", "")
             if output_file:
-                # Add our processing summary to the result
+                # Add simple processing summary
                 result["processing_summary"] = {
-                    "priority_breakdown": priority_summary,
-                    "total_issue_types": list(sorted(all_issue_types)),
-                    "total_app_codes": list(sorted(all_app_codes)),
+                    "total_documents": total,
+                    "retrieved_documents": len(hits),
+                    "has_priority_field": "priority" in (hits[0].get("_source", {}) if hits else {}),
                     "date_range": {
                         "start_date": start_date,
                         "end_date": end_date
@@ -189,31 +128,6 @@ def query_elasticsearch():
                     json.dump(result, f, indent=2)
                 
                 print(f"Query results saved to {output_file}")
-                
-                # Print summary
-                hits = result.get("hits", {}).get("hits", [])
-                total = result.get("hits", {}).get("total", {}).get("value", 0)
-                print(f"Found {total} total documents with P1/P2 priority")
-                print(f"Retrieved {len(hits)} documents")
-                
-                print(f"\nPriority Breakdown:")
-                for priority in sorted(priority_summary.keys()):
-                    print(f"  {priority}: {priority_summary[priority]['total_count']} issues")
-                    for issue_type in sorted(priority_summary[priority]['issue_types'].keys()):
-                        count = priority_summary[priority]['issue_types'][issue_type]['count']
-                        app_count = len(priority_summary[priority]['issue_types'][issue_type]['app_codes'])
-                        print(f"    {issue_type}: {count} issues across {app_count} applications")
-                
-                print(f"\nAll Issue Types found: {len(all_issue_types)}")
-                print(f"Issue Types: {', '.join(sorted(all_issue_types))}")
-                print(f"Applications affected: {len(all_app_codes)}")
-                
-                if hits:
-                    print(f"\nSample document fields:")
-                    sample_source = hits[0].get("_source", {})
-                    print(f"Available fields: {list(sample_source.keys())}")
-                else:
-                    print("No documents returned")
         else:
             print(f"ERROR: Elasticsearch query failed with status {response.status_code}")
             print(f"Response: {response.text}")
@@ -231,9 +145,9 @@ def query_elasticsearch():
                 "hits": {"hits": [], "total": {"value": 0}},
                 "aggregations": {},
                 "processing_summary": {
-                    "priority_breakdown": {},
-                    "total_issue_types": [],
-                    "total_app_codes": [],
+                    "total_documents": 0,
+                    "retrieved_documents": 0,
+                    "has_priority_field": False,
                     "date_range": {
                         "start_date": get_date_range()[0],
                         "end_date": get_date_range()[1]
