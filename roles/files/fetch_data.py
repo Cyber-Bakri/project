@@ -30,7 +30,11 @@ def get_date_range():
     return start_date_str, end_date_str
 
 def query_elasticsearch():
-    """Query Elasticsearch using environment variables for configuration"""
+    """Query Elasticsearch using environment variables for configuration
+    
+    PRIORITY FILTER: This query only fetches P1 and P2 priority issues.
+    All other priorities (P3, P4, etc.) will be excluded from results.
+    """
     
     # Get environment variables
     es_host = get_env_var("ES_HOST", required=True)
@@ -38,7 +42,7 @@ def query_elasticsearch():
     
     # date range for last week
     start_date, end_date = get_date_range()
-    print(f"Fetching data from {start_date} to {end_date}")
+    print(f"Fetching P1/P2 priority data from {start_date} to {end_date}")
     
     # Get authentication if provided
     username = get_env_var("ES_USERNAME", "")
@@ -54,19 +58,13 @@ def query_elasticsearch():
     query = {
         "query": {
             "bool": {
-                "must": [
-                    {
-                        "exists": {
-                            "field": "issueType"
-                        }
-                    },
-                    {
-                        "exists": {
-                            "field": "appCode"
-                        }
+                            "must": [
+                {
+                    "terms": {
+                        "priority.keyword": ["P1", "P2"]
                     }
+                }
                 ]
-                # Removed priority and issueState filters as they may not exist in actual data
                 # Add date range filter if needed:
                 # {
                 #     "range": {
@@ -89,12 +87,22 @@ def query_elasticsearch():
                         "terms": {
                             "field": "issueType.keyword"
                         }
+                    },
+                    "priorities": {
+                        "terms": {
+                            "field": "priority.keyword"
+                        }
                     }
                 }
             },
             "all_issue_types": {
                 "terms": {
                     "field": "issueType.keyword"
+                }
+            },
+            "priority_distribution": {
+                "terms": {
+                    "field": "priority.keyword"
                 }
             }
         },
@@ -125,25 +133,36 @@ def query_elasticsearch():
         if response.status_code == 200:
             app_codes_with_issues = []
             all_issue_types = set()
+            priority_distribution = {}
             
             if "aggregations" in result:
                 if "all_issue_types" in result["aggregations"]:
                     for bucket in result["aggregations"]["all_issue_types"]["buckets"]:
                         all_issue_types.add(bucket["key"])
                 
+                if "priority_distribution" in result["aggregations"]:
+                    for bucket in result["aggregations"]["priority_distribution"]["buckets"]:
+                        priority_distribution[bucket["key"]] = bucket["doc_count"]
+                
                 if "by_app_code" in result["aggregations"]:
                     for app_bucket in result["aggregations"]["by_app_code"]["buckets"]:
                         if app_bucket["doc_count"] > 0:
                             app_code = app_bucket["key"]
                             app_issue_types = []
+                            app_priorities = []
                             
                             if "issue_types" in app_bucket:
                                 for type_bucket in app_bucket["issue_types"]["buckets"]:
                                     app_issue_types.append(type_bucket["key"])
                             
+                            if "priorities" in app_bucket:
+                                for priority_bucket in app_bucket["priorities"]["buckets"]:
+                                    app_priorities.append(f"{priority_bucket['key']}({priority_bucket['doc_count']})")
+                            
                             app_codes_with_issues.append({
                                 "app_code": app_code,
                                 "issue_types": app_issue_types,
+                                "priorities": app_priorities,
                                 "count": app_bucket["doc_count"]
                             })
             
@@ -157,14 +176,18 @@ def query_elasticsearch():
                 with open(output_file, 'w') as f:
                     json.dump(result, f, indent=2)
                 print(f"Query results saved to {output_file}")
-                print(f"Found {len(app_codes_with_issues)} app codes with issues")
+                print(f"PRIORITY FILTER: Only fetching P1 and P2 priority issues")
+                print(f"Found {len(app_codes_with_issues)} app codes with P1/P2 issues")
                 print(f"Total issue types found: {len(all_issue_types)}")
                 print(f"Issue types: {', '.join(sorted(all_issue_types))}")
+                
+                if priority_distribution:
+                    print(f"Priority distribution: {priority_distribution}")
                 
                 # Print sample of actual documents for debugging
                 hits = result.get("hits", {}).get("hits", [])
                 total = result.get("hits", {}).get("total", {}).get("value", 0)
-                print(f"Total documents: {total}")
+                print(f"Total P1/P2 documents: {total}")
                 print(f"Retrieved {len(hits)} documents")
                 
                 if hits:
