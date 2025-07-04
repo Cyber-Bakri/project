@@ -78,55 +78,31 @@
       app_high_severity_issues: "{{ custodian_data[app_custodian_key].issues | default([]) | selectattr('severity', 'in', ['critical', 'high']) | list }}"
     when: app_custodian_key is defined and app_custodian_key in custodian_data
 
-  - name: Create personalized email content for app custodian
-    copy:
-      content: |
-        Subject: URGENT: Compliance Issues for Application {{ app_info.app_code }} - {{ ansible_date_time.date }}
-
-        Dear {{ app_custodian_name }},
-
-        This is an urgent compliance notification for your application {{ app_info.app_code }}.
-
-        ===============================================
-        APPLICATION COMPLIANCE REPORT
-        ===============================================
-
-        Application Code: {{ app_info.app_code }}
-        Custodian: {{ app_custodian_name }}
-        Report Date: {{ ansible_date_time.date }}
-        Total Issues: {{ app_specific_issues | length }}
-
-        Issue Types: {{ app_info.issue_types | join(', ') }}
-
-        ===============================================
-        SEVERITY BREAKDOWN
-        ===============================================
-
-        Critical: {{ app_info.severity_counts.critical | default(0) }}
-        High: {{ app_info.severity_counts.high | default(0) }}
-        Medium: {{ app_info.severity_counts.medium | default(0) }}
-        Low: {{ app_info.severity_counts.low | default(0) }}
-        Info: {{ app_info.severity_counts.info | default(0) }}
-
-        ===============================================
-        REQUIRED ACTIONS
-        ===============================================
-
-        1. Review all issues for your application
-        2. Implement recommended remediations  
-        3. Update security controls as needed
-        4. Contact IT Security team for assistance: security@company.com
-
-        This is an automated notification. Please do not reply to this email.
-
-        Best regards,
-        IT Security & Compliance Team
+  - name: Create personalized email content for app custodian using template
+    template:
+      src: "{{ email_template }}"
       dest: "{{ output_dir }}/{{ app_info.app_code }}_email_content.txt"
+      vars:
+        report_date: "{{ ansible_date_time.date }}"
+        app_code: "{{ app_info.app_code }}"
+        start_date: "{{ ansible_date_time.date }}"
+        end_date: "{{ ansible_date_time.date }}"
+        generated_at: "{{ ansible_date_time.iso8601 }}"
+        total_issues: "{{ app_specific_issues | length }}"
+        high_severity_count: "{{ app_high_severity_issues | length }}"
+        issue_types: "{{ app_info.issue_types | join(', ') }}"
+        critical_count: "{{ app_info.severity_counts.critical | default(0) }}"
+        high_count: "{{ app_info.severity_counts.high | default(0) }}"
+        medium_count: "{{ app_info.severity_counts.medium | default(0) }}"
+        low_count: "{{ app_info.severity_counts.low | default(0) }}"
+        info_count: "{{ app_info.severity_counts.info | default(0) }}"
+        high_severity_issues: "{{ app_high_severity_issues }}"
+        non_compliant_app: "{{ {'reasons': ['High/Critical severity issues detected'], 'severity_counts': app_info.severity_counts} if (app_info.severity_counts.critical | default(0)) > 0 or (app_info.severity_counts.high | default(0)) > 0 else None }}"
 
   - name: Send personalized notification to app custodian
     community.general.mail:
       to: "{{ app_custodian_email if app_custodian_email else 'compliance-team@company.com' }}"
-      subject: "URGENT: Compliance Issues for {{ app_info.app_code }} - {{ ansible_date_time.date }}"
+      subject: "Server Compliance Report - {{ ansible_date_time.date }} - {{ app_info.app_code }}"
       body: "{{ lookup('file', output_dir + '/' + app_info.app_code + '_email_content.txt') }}"
     register: custodian_email_result
 
