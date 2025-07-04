@@ -2,14 +2,14 @@ Subject: Server Compliance Report - {{ report_date }} - {{ app_code }}
 
 Dear Application Custodian,
 
-This is an automated compliance report for your application(s) for the period from {{ start_date }} to {{ end_date }}.
+This is an automated compliance report for your application {{ app_code }} for the period from {{ start_date }} to {{ end_date }}.
 
 ===============================================
 COMPLIANCE REPORT SUMMARY
 ===============================================
 
 Report Date: {{ generated_at }}
-Application Code(s): {{ app_code }}
+Application Code: {{ app_code }}
 Total Issues Found: {{ total_issues }}
 High Severity Issues: {{ high_severity_count }}
 
@@ -29,29 +29,29 @@ Info: {{ info_count }}
 HIGH SEVERITY ISSUES SUMMARY
 ===============================================
 
-| Issue Type | Severity | Component | App Code | Remediation Link |
-|------------|----------|-----------|----------|------------------|
+| Issue Type | Severity | Component | App Code | Fix By Date | Remediation Link |
+|------------|----------|-----------|----------|-------------|------------------|
 {% for issue in high_severity_issues %}
-| {{ issue.type }} | {{ issue.severity }} | {{ issue.component }} | {{ issue.app_code | default('N/A') }} | {{ issue.remediation_link | default('N/A') }} |
+| {{ issue.type }} | {{ issue.severity }} | {{ issue.component }} | {{ issue.app_code | default('N/A') }} | {{ issue.fix_by_date | default('N/A') }} | {{ issue.remediation_link | default('N/A') }} |
 {% endfor %}
 
-{% if non_compliant_apps %}
+{% if non_compliant_app %}
 ===============================================
-NON-COMPLIANT APPLICATIONS
+NON-COMPLIANT APPLICATION
 ===============================================
 
-The following applications require immediate attention:
+Your application {{ app_code }} requires immediate attention for the following reasons:
 
-{% for reason in non_compliant_apps[0].reasons %}
+{% for reason in non_compliant_app.reasons %}
 - {{ reason }}
 {% endfor %}
 
-Severity Breakdown for Non-Compliant Apps:
-- Critical: {{ non_compliant_apps[0].severity_counts.critical }}
-- High: {{ non_compliant_apps[0].severity_counts.high }}
-- Medium: {{ non_compliant_apps[0].severity_counts.medium }}
-- Low: {{ non_compliant_apps[0].severity_counts.low }}
-- Info: {{ non_compliant_apps[0].severity_counts.info }}
+Severity Breakdown for {{ app_code }}:
+- Critical: {{ non_compliant_app.severity_counts.critical }}
+- High: {{ non_compliant_app.severity_counts.high }}
+- Medium: {{ non_compliant_app.severity_counts.medium }}
+- Low: {{ non_compliant_app.severity_counts.low }}
+- Info: {{ non_compliant_app.severity_counts.info }}
 {% endif %}
 
 ===============================================
