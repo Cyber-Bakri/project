@@ -78,6 +78,14 @@
       app_high_severity_issues: "{{ custodian_data[app_custodian_key].issues | default([]) | selectattr('severity', 'in', ['critical', 'high']) | list }}"
     when: app_custodian_key is defined and app_custodian_key in custodian_data
 
+  - name: Transform high severity issues for email template
+    set_fact:
+      app_high_severity_issues_with_fix_date: >-
+        [ {% for issue in app_high_severity_issues %}
+          {{ issue | combine({'fix_by_date': issue.fixByDate | default('N/A'), 'type': issue.issueType | default('N/A'), 'component': issue.affectedItemName | default('N/A'), 'remediation_link': issue.solution | default('N/A')}) }}{% if not loop.last %},{% endif %}
+        {% endfor %} ]
+    when: app_custodian_key is defined and app_custodian_key in custodian_data
+
   - name: Create personalized email content for app custodian using template
     template:
       src: "{{ email_template }}"
@@ -96,7 +104,7 @@
         medium_count: "{{ app_info.severity_counts.medium | default(0) }}"
         low_count: "{{ app_info.severity_counts.low | default(0) }}"
         info_count: "{{ app_info.severity_counts.info | default(0) }}"
-        high_severity_issues: "{{ app_high_severity_issues }}"
+        high_severity_issues: "{{ app_high_severity_issues_with_fix_date }}"
         non_compliant_app: "{{ {'reasons': ['High/Critical severity issues detected'], 'severity_counts': app_info.severity_counts} if (app_info.severity_counts.critical | default(0)) > 0 or (app_info.severity_counts.high | default(0)) > 0 else None }}"
 
   - name: Send personalized notification to app custodian
